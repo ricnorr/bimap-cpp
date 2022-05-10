@@ -1,9 +1,27 @@
 #pragma once
 #include "intrusive_cartesian_tree.h"
+#include <climits>
 #include <cstddef>
 #include <list>
 #include <set>
-#include <climits>
+#include <utility>
+
+struct LeftTag {};
+struct RightTag {};
+
+struct NodeHead : public IntrusiveNode<LeftTag>,
+                  public IntrusiveNode<RightTag> {
+  NodeHead() : IntrusiveNode<LeftTag>(), IntrusiveNode<RightTag>() {}
+};
+
+template <class Left, class Right>
+struct Node : public NodeBase<Left, LeftTag>, public NodeBase<Right, RightTag> {
+
+  template <class LeftArg = Left, class RightArg = Right>
+  Node(LeftArg&& left, RightArg&& right)
+      : NodeBase<Left, LeftTag>(std::forward<LeftArg>(left)),
+        NodeBase<Right, RightTag>(std::forward<RightArg>(right)) {}
+};
 
 template <typename Left, typename Right, typename CompareLeft = std::less<Left>,
           typename CompareRight = std::less<Right>>
@@ -11,15 +29,11 @@ class bimap {
 
   using left_t = Left;
   using right_t = Right;
-  using left_cmp_t = CompareLeft;
-  using right_cmp_t = CompareRight;
-  using left_tree_t = IntrusiveCartesianTree<LeftTag, left_t, left_cmp_t>;
-  using right_tree_t = IntrusiveCartesianTree<RightTag, right_t, right_cmp_t>;
+  using left_tree_t = IntrusiveCartesianTree<LeftTag, left_t, CompareLeft>;
+  using right_tree_t = IntrusiveCartesianTree<RightTag, right_t, CompareRight>;
+  using node_head_t = NodeHead;
 
-private:
-  left_cmp_t left_compare;
-  right_cmp_t right_compare;
-  NodeHead head = NodeHead();
+  node_head_t head = NodeHead();
   left_tree_t left_set;
   right_tree_t right_set;
   size_t map_size = 0;
@@ -38,6 +52,11 @@ private:
     base_iterator(const IntrusiveNode<Tag>* node_ptr) : node_ptr(node_ptr) {}
 
   public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = const Value;
+    using pointer = Value const*;
+    using reference = Value const&;
+
     Value const& operator*() const {
       return static_cast<const NodeBase<Value, Tag>*>(node_ptr)->value;
     }
@@ -105,24 +124,19 @@ private:
   };
 
 public:
-  bimap(left_cmp_t compare_left = left_cmp_t(),
-        right_cmp_t compare_right = right_cmp_t())
-      : left_compare(compare_left), right_compare(compare_right),
-        left_set(&head, compare_left), right_set(&head, compare_right){
+  bimap(CompareLeft compare_left = CompareLeft(),
+        CompareRight compare_right = CompareRight())
+      : left_set(&head, compare_left), right_set(&head, compare_right) {}
 
-                                       };
-
-  bimap(bimap const& other) : bimap(other.left_compare, other.right_compare) {
+  bimap(bimap const& other) : bimap() {
     left_iterator other_left_iterator = other.begin_left();
     while (other_left_iterator != other.end_left()) {
-      auto left_val = *other_left_iterator;
-      auto right_val = *other_left_iterator.flip();
-      this->insert(left_val, right_val);
+      this->insert(*other_left_iterator, *other_left_iterator.flip());
       other_left_iterator++;
     }
   }
-  bimap(bimap&& other) noexcept
-      : bimap(other.left_compare, other.right_compare) {
+
+  bimap(bimap&& other) noexcept : bimap() {
     this->swap(other);
   }
 
@@ -141,60 +155,36 @@ public:
 
   void swap(bimap& other) {
     std::swap(head, other.head);
-    std::swap(left_compare, other.left_compare);
-    std::swap(right_compare, other.right_compare);
-    this->left_set = left_tree_t(&head, left_compare);
-    this->right_set = right_tree_t(&head, right_compare);
-    if (left_set.end()->left != nullptr) {
-      left_set.end()->left->top = &head;
-    }
-    if (right_set.end()->left != nullptr) {
-      right_set.end()->left->top = &head;
-    }
-    other.left_set = left_tree_t(&other.head, other.left_compare);
-    other.right_set = right_tree_t(&other.head, other.right_compare);
-    if (other.left_set.end()->left != nullptr) {
-      other.left_set.end()->left->top = &other.head;
-    }
-    if (other.right_set.end()->left != nullptr) {
-      other.right_set.end()->left->top = &other.head;
-    }
+    this->left_set = left_tree_t(&head);
+    this->right_set = right_tree_t(&head);
+    other.left_set = left_tree_t(&other.head);
+    other.right_set = right_tree_t(&other.head);
   }
 
   bimap& operator=(bimap&& other) noexcept {
     if (this == &other) {
       return *this;
     }
-    this->swap(other);
+    this->delete_all();
+    std::swap(head, other.head);
+    this->left_set = left_tree_t(&head);
+    this->right_set = right_tree_t(&head);
+    other.left_set = left_tree_t(&other.head);
+    other.right_set = right_tree_t(&other.head);
     return *this;
   }
 
-  ~bimap() {
+  ~bimap() noexcept {
     delete_all();
   }
 
-  left_iterator insert(const left_t& left, const right_t& right) {
-    auto l = left;
-    auto r = right;
-    return insert(std::move(l), std::move(r));
-  }
-
-  left_iterator insert(const left_t& left, right_t&& right) {
-    auto l = left;
-    return insert(std::move(l), std::move(right));
-  }
-
-  left_iterator insert(left_t&& left, const right_t& right) {
-    auto r = right;
-    return insert(std::move(left), std::move(r));
-  }
-
-  left_iterator insert(left_t&& left, right_t&& right) {
+  template <class LeftArg = left_t, class RightArg = right_t>
+  left_iterator insert(LeftArg&& left, RightArg&& right) {
     if (left_set.find(left) != nullptr || right_set.find(right) != nullptr) {
       return left_iterator(left_set.end());
     }
-    auto* node =
-        new Node<left_t, right_t>(std::move(left), std::move(right), rand() % INT_MAX);
+    auto* node = new Node<left_t, right_t>(std::forward<LeftArg>(left),
+                                           std::forward<RightArg>(right));
     left_set.insert(node);
     right_set.insert(node);
     map_size++;
@@ -202,9 +192,7 @@ public:
   }
 
   left_iterator erase_left(left_iterator it) {
-    auto curIterator = *it;
-    it++;
-    erase_left(curIterator);
+    erase_left(*(it++));
     return it;
   }
 
@@ -215,7 +203,7 @@ public:
     }
     left_set.remove(*iterator_on_removed);
     auto removed = right_set.remove(*iterator_on_removed.flip());
-    delete dynamic_cast<Node<left_t, right_t>*>(removed);
+    delete static_cast<Node<left_t, right_t>*>(removed);
     map_size--;
     return true;
   }
@@ -238,14 +226,12 @@ public:
   }
 
   left_iterator erase_left(left_iterator first, left_iterator last) {
-    while (true) {
-      if (first == last) {
-        return last;
-      }
+    while (first != last) {
       left_iterator cur = first;
       first++;
       erase_left(*cur);
     }
+    return last;
   }
 
   right_iterator erase_right(right_iterator first, right_iterator last) {

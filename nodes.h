@@ -7,7 +7,7 @@ struct IntrusiveNode {
   IntrusiveNode<Tag>* right = nullptr;
   IntrusiveNode<Tag>* top = nullptr;
   int weight;
-  IntrusiveNode(int weight) : weight(weight) {}
+  IntrusiveNode() {}
 
   virtual ~IntrusiveNode() = default;
 
@@ -50,32 +50,11 @@ struct IntrusiveNode {
   }
 };
 
-struct LeftTag {};
-struct RightTag {};
-
-struct NodeHead : public IntrusiveNode<LeftTag>,
-                  public IntrusiveNode<RightTag> {
-  NodeHead()
-      : IntrusiveNode<LeftTag>(INT_MAX), IntrusiveNode<RightTag>(INT_MAX) {}
-};
-
 template <class Type, class Tag>
 struct NodeBase : public IntrusiveNode<Tag> {
   Type value;
-  NodeBase(const Type& value, int weight)
-      : IntrusiveNode<Tag>(weight), value(value) {}
 
-  NodeBase(Type&& value, int weight)
-      : IntrusiveNode<Tag>(weight), value(std::move(value)) {}
-};
-
-template <class Left, class Right>
-struct Node : public NodeBase<Left, LeftTag>, public NodeBase<Right, RightTag> {
-  Node(const Left& left, const Right& right, int weight)
-      : NodeBase<Left, LeftTag>(left, weight), NodeBase<Right, RightTag>(
-                                                   right, weight) {}
-
-  Node(Left&& left, Right&& right, int weight)
-      : NodeBase<Left, LeftTag>(std::move(left), weight),
-        NodeBase<Right, RightTag>(std::move(right), weight) {}
+  template <class ValueType = Type>
+  NodeBase(ValueType&& value)
+      : IntrusiveNode<Tag>(), value(std::forward<ValueType>(value)) {}
 };
